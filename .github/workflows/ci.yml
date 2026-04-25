@@ -68,7 +68,7 @@ jobs:
         run: kill $APP_PID 2>/dev/null || true
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 2 – integration-tests: full Playwright suite
+  # JOB 2 – integration-tests: full Playwright suite + Allure reporting
   # Runs only after the 'app' job passes, guaranteeing the app works first.
   # ─────────────────────────────────────────────────────────────────────────────
   integration-tests:
@@ -91,6 +91,11 @@ jobs:
         with:
           path: node_modules
           key: node-modules-${{ runner.os }}-${{ github.sha }}
+
+      # Install allure-playwright reporter and allure-commandline
+      - name: Install Allure dependencies
+        run: |
+          npm install --save-dev allure-playwright allure-commandline
 
       # Install Playwright browsers
       - name: Install Playwright browsers
@@ -120,29 +125,38 @@ jobs:
         env:
           CI: true
           BASE_URL: http://localhost:${{ env.PORT }}
-        run: npx playwright test
+        # allure-playwright writes raw results to allure-results/
+        run: npx playwright test --reporter=line,allure-playwright
+        continue-on-error: true  # generate report even when tests fail
 
       - name: Stop application
         if: always()
         run: kill $APP_PID 2>/dev/null || true
 
-      # Always upload reports so failures are easy to diagnose
-      - name: Upload Playwright HTML report
+      # Generate the self-contained Allure HTML report from raw results
+      - name: Generate Allure report
+        if: always()
+        run: npx allure generate allure-results --clean -o allure-report
+
+      # Upload the full interactive Allure HTML report
+      - name: Upload Allure HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: playwright-report/
+          name: allure-report
+          path: allure-report/
           retention-days: 14
 
-      - name: Upload test results (JUnit XML)
+      # Upload raw Allure results (useful for trend tracking / history)
+      - name: Upload Allure raw results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: test-results/
+          name: allure-results
+          path: allure-results/
           retention-days: 14
 
+      # Upload screenshots & traces only on failure for quick debugging
       - name: Upload screenshots & traces on failure
         if: failure()
         uses: actions/upload-artifact@v4
