@@ -1,0 +1,21 @@
+{
+  "name": "taskflow",
+  "version": "1.0.0",
+  "description": "A simple task management app with Playwright integration tests",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test:integration": "playwright test",
+    "test:integration:ui": "playwright test --ui",
+    "test:integration:report": "playwright show-report"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0",
+    "nodemon": "^3.1.0",
+    "typescript": "^5.4.5"
+  }
+}

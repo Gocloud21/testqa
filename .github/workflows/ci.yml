@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: '20'
+  PORT: 3000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 – app: install deps and verify the server starts cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  app:
+    name: 🚀 Start Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Cache node_modules so the integration job can reuse them
+      - name: Cache node_modules
+        uses: actions/cache/save@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Start the app in the background and wait until /health returns 200
+      - name: Start application & verify health
+        run: |
+          node src/server.js &
+          echo "APP_PID=$!" >> $GITHUB_ENV
+
+          echo "Waiting for server to be healthy..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/health || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Server is healthy after ${i}s"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "❌ Server did not become healthy in 30 seconds"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Confirm API responds correctly
+        run: |
+          RESPONSE=$(curl -s http://localhost:$PORT/api/tasks)
+          echo "API response: $RESPONSE"
+          # Ensure we got a JSON array with at least one element
+          echo "$RESPONSE" | grep -q '"id"' || (echo "Unexpected API response" && exit 1)
+
+      - name: Stop application
+        if: always()
+        run: kill $APP_PID 2>/dev/null || true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2 – integration-tests: full Playwright suite
+  # Runs only after the 'app' job passes, guaranteeing the app works first.
+  # ─────────────────────────────────────────────────────────────────────────────
+  integration-tests:
+    name: 🧪 Integration Tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: app        # ← depends on the app job succeeding
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      # Restore cached node_modules from the app job
+      - name: Restore node_modules cache
+        uses: actions/cache/restore@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      # Install Playwright browsers (only what we need for CI speed)
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox
+
+      # Start the application and wait until healthy before running tests
+      - name: Start application
+        run: |
+          node src/server.js &
+          echo "APP_PID=$!" >> $GITHUB_ENV
+
+          echo "Waiting for server..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/health || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Server ready"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "❌ Timed out waiting for server"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run Playwright integration tests
+        env:
+          CI: true
+          BASE_URL: http://localhost:${{ env.PORT }}
+        run: npx playwright test
+
+      - name: Stop application
+        if: always()
+        run: kill $APP_PID 2>/dev/null || true
+
+      # Always upload reports so failures are easy to diagnose
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test results (JUnit XML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 14
+
+      - name: Upload screenshots & traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            test-results/**/*.png
+            test-results/**/*.zip
+          retention-days: 7
