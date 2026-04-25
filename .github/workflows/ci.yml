@@ -26,17 +26,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       # Cache node_modules so the integration job can reuse them
       - name: Cache node_modules
         uses: actions/cache/save@v4
         with:
           path: node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: node-modules-${{ runner.os }}-${{ github.sha }}
 
       # Start the app in the background and wait until /health returns 200
       - name: Start application & verify health
@@ -62,7 +61,6 @@ jobs:
         run: |
           RESPONSE=$(curl -s http://localhost:$PORT/api/tasks)
           echo "API response: $RESPONSE"
-          # Ensure we got a JSON array with at least one element
           echo "$RESPONSE" | grep -q '"id"' || (echo "Unexpected API response" && exit 1)
 
       - name: Stop application
@@ -86,18 +84,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
 
       # Restore cached node_modules from the app job
       - name: Restore node_modules cache
         uses: actions/cache/restore@v4
         with:
           path: node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            node-modules-${{ runner.os }}-
+          key: node-modules-${{ runner.os }}-${{ github.sha }}
 
-      # Install Playwright browsers (only what we need for CI speed)
+      # Install Playwright browsers
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox
 
